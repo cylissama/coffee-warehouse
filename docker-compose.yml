@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: coffee_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: coffee_staging
+      MYSQL_USER: coffee_user
+      MYSQL_PASSWORD: coffee_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql/mysql:/docker-entrypoint-initdb.d
+
+  postgres:
+    image: postgres:15
+    container_name: coffee_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: coffee_warehouse
+      POSTGRES_USER: coffee_user
+      POSTGRES_PASSWORD: coffee_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/postgres:/docker-entrypoint-initdb.d
+
+volumes:
+  mysql_data:
+  postgres_data:

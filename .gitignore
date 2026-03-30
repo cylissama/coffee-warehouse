@@ -1,0 +1,73 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Conda
+.conda/
+conda-meta/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+*.out
+*.err
+
+# Coverage / test
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build / packaging
+build/
+dist/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+
+# IDEs / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Project data outputs
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Database / local dumps
+*.sqlitedb
+*.sqlite3
+*.db
+*.dump
+
+# OS / misc
+Thumbs.db

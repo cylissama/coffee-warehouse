@@ -1,0 +1,10 @@
+pandas
+requests
+sqlalchemy
+psycopg2-binary
+pymysql
+python-dotenv
+streamlit
+matplotlib
+cryptography
+yfinance
