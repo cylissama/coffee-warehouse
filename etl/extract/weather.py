@@ -40,6 +40,8 @@ def fetch_weather_data(
     })
 
     df["location_name"] = "Sao Paulo, Brazil"
+    df["latitude"] = latitude
+    df["longitude"] = longitude
     df["source"] = "open-meteo"
 
     return df

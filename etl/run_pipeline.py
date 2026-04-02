@@ -17,6 +17,17 @@ from etl.transform.build_features import (
     build_fact_market_features,
 )
 
+from etl.extract.news import fetch_coffee_news_rss
+from etl.load.load_mongo import (
+    get_mongo_database,
+    reset_mongo_collections,
+    load_coffee_documents,
+    load_weather_documents,
+    load_macro_documents,
+    load_news_documents,
+    reset_news_collection,
+)
+
 load_dotenv()
 
 
@@ -96,6 +107,7 @@ def clear_warehouse(pg_eng):
 def main():
     mysql_eng = mysql_engine()
     pg_eng = postgres_engine()
+    mongo_db = get_mongo_database()
 
     run_id = log_etl_start(mysql_eng, "coffee_market_pipeline")
 
@@ -105,6 +117,8 @@ def main():
         weather = fetch_weather_data(start="2024-01-01", end="2025-12-31")
         cpi = fetch_fred_series("CPIAUCSL", start="2024-01-01", end="2025-12-31")
         fedfunds = fetch_fred_series("FEDFUNDS", start="2024-01-01", end="2025-12-31")
+        print("Extracting coffee news articles...")
+        news_articles = fetch_coffee_news_rss(max_articles=20)
 
         macro = pd.concat([cpi, fedfunds], ignore_index=True)
 
@@ -112,10 +126,20 @@ def main():
         clear_staging(mysql_eng)
         clear_warehouse(pg_eng)
 
+        print("Clearing MongoDB collections...")
+        reset_mongo_collections(mongo_db)
+        reset_news_collection(mongo_db)
+        
         print("Loading staging tables...")
         coffee.to_sql("raw_coffee_prices", mysql_eng, if_exists="append", index=False)
         weather.to_sql("raw_weather_data", mysql_eng, if_exists="append", index=False)
         macro.to_sql("raw_macro_data", mysql_eng, if_exists="append", index=False)
+
+        print("Loading MongoDB documents...")
+        load_coffee_documents(mongo_db, coffee)
+        load_weather_documents(mongo_db, weather)
+        load_macro_documents(mongo_db, macro)
+        load_news_documents(mongo_db, news_articles)
 
         print("Building dimensions...")
         all_dates = pd.concat([

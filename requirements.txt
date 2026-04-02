@@ -8,3 +8,8 @@ streamlit
 matplotlib
 cryptography
 yfinance
+pymongo
+feedparser
+requests
+beautifulsoup4
+lxml
