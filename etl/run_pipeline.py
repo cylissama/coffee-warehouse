@@ -1,11 +1,21 @@
 import os
-from dotenv import load_dotenv
+from datetime import datetime
 import pandas as pd
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
-from extract.coffee import fetch_coffee_prices
-from extract.weather import fetch_weather_data
-from extract.macro import fetch_fred_series
+from etl.extract.coffee import fetch_coffee_prices
+from etl.extract.weather import fetch_weather_data
+from etl.extract.macro import fetch_fred_series
+from etl.transform.build_features import (
+    build_dim_date,
+    build_dim_region,
+    build_dim_indicator,
+    build_fact_coffee_prices,
+    build_fact_weather_daily,
+    build_fact_macro_daily,
+    build_fact_market_features,
+)
 
 load_dotenv()
 
@@ -24,6 +34,47 @@ def postgres_engine():
     )
 
 
+def log_etl_start(mysql_eng, job_name: str) -> int:
+    started_at = datetime.now()
+    with mysql_eng.begin() as conn:
+        result = conn.execute(
+            text("""
+                INSERT INTO etl_job_runs (job_name, run_status, started_at, rows_loaded, notes)
+                VALUES (:job_name, :run_status, :started_at, :rows_loaded, :notes)
+            """),
+            {
+                "job_name": job_name,
+                "run_status": "RUNNING",
+                "started_at": started_at,
+                "rows_loaded": 0,
+                "notes": "ETL job started"
+            }
+        )
+        return result.lastrowid
+
+
+def log_etl_finish(mysql_eng, run_id: int, status: str, rows_loaded: int, notes: str):
+    ended_at = datetime.now()
+    with mysql_eng.begin() as conn:
+        conn.execute(
+            text("""
+                UPDATE etl_job_runs
+                SET run_status = :run_status,
+                    ended_at = :ended_at,
+                    rows_loaded = :rows_loaded,
+                    notes = :notes
+                WHERE id = :id
+            """),
+            {
+                "run_status": status,
+                "ended_at": ended_at,
+                "rows_loaded": rows_loaded,
+                "notes": notes,
+                "id": run_id
+            }
+        )
+
+
 def clear_staging(mysql_eng):
     with mysql_eng.begin() as conn:
         conn.execute(text("DELETE FROM raw_coffee_prices"))
@@ -33,89 +84,85 @@ def clear_staging(mysql_eng):
 
 def clear_warehouse(pg_eng):
     with pg_eng.begin() as conn:
-        conn.execute(text("DELETE FROM fact_market_summary"))
+        conn.execute(text("DELETE FROM fact_market_features"))
+        conn.execute(text("DELETE FROM fact_macro_daily"))
+        conn.execute(text("DELETE FROM fact_weather_daily"))
+        conn.execute(text("DELETE FROM fact_coffee_prices"))
+        conn.execute(text("DELETE FROM dim_indicator"))
+        conn.execute(text("DELETE FROM dim_region"))
         conn.execute(text("DELETE FROM dim_date"))
-
-
-def load_staging(mysql_eng, coffee, weather, macro):
-    coffee.to_sql("raw_coffee_prices", mysql_eng, if_exists="append", index=False)
-    weather.to_sql("raw_weather_data", mysql_eng, if_exists="append", index=False)
-    macro.to_sql("raw_macro_data", mysql_eng, if_exists="append", index=False)
-
-
-def transform_for_warehouse(coffee, weather, macro):
-    coffee["trade_date"] = pd.to_datetime(coffee["trade_date"])
-    weather["weather_date"] = pd.to_datetime(weather["weather_date"])
-    macro["macro_date"] = pd.to_datetime(macro["macro_date"])
-
-    # Use CPIAUCSL first
-    cpi = macro[macro["indicator_name"] == "CPIAUCSL"].copy()
-
-    df = coffee.merge(
-        weather,
-        left_on="trade_date",
-        right_on="weather_date",
-        how="left"
-    )
-
-    df = df.merge(
-        cpi,
-        left_on="trade_date",
-        right_on="macro_date",
-        how="left"
-    )
-
-    # Forward fill CPI because it is monthly while coffee is daily
-    df = df.sort_values("trade_date")
-    df["indicator_value"] = df["indicator_value"].ffill()
-
-    fact = pd.DataFrame({
-        "date_id": df["trade_date"].dt.date,
-        "coffee_close": df["close_price"],
-        "avg_temp": df["avg_temp"],
-        "precipitation": df["precipitation"],
-        "cpi_value": df["indicator_value"]
-    })
-
-    fact["coffee_7day_ma"] = fact["coffee_close"].rolling(7, min_periods=1).mean()
-
-    dim_date = pd.DataFrame({"date_id": pd.to_datetime(fact["date_id"])})
-    dim_date["year"] = dim_date["date_id"].dt.year
-    dim_date["month"] = dim_date["date_id"].dt.month
-    dim_date["day"] = dim_date["date_id"].dt.day
-    dim_date["date_id"] = dim_date["date_id"].dt.date
-
-    return dim_date.drop_duplicates(), fact.drop_duplicates(subset=["date_id"])
-
-
-def load_warehouse(pg_eng, dim_date, fact):
-    dim_date.to_sql("dim_date", pg_eng, if_exists="append", index=False)
-    fact.to_sql("fact_market_summary", pg_eng, if_exists="append", index=False)
 
 
 def main():
     mysql_eng = mysql_engine()
     pg_eng = postgres_engine()
 
-    print("Extracting real data...")
-    coffee = fetch_coffee_prices(start="2024-01-01", end="2025-12-31")
-    weather = fetch_weather_data(start="2024-01-01", end="2025-12-31")
-    macro = fetch_fred_series("CPIAUCSL", start="2024-01-01", end="2025-12-31")
+    run_id = log_etl_start(mysql_eng, "coffee_market_pipeline")
 
-    print("Clearing old data...")
-    clear_staging(mysql_eng)
-    clear_warehouse(pg_eng)
+    try:
+        print("Extracting source data...")
+        coffee = fetch_coffee_prices(start="2024-01-01", end="2025-12-31")
+        weather = fetch_weather_data(start="2024-01-01", end="2025-12-31")
+        cpi = fetch_fred_series("CPIAUCSL", start="2024-01-01", end="2025-12-31")
+        fedfunds = fetch_fred_series("FEDFUNDS", start="2024-01-01", end="2025-12-31")
 
-    print("Loading staging...")
-    load_staging(mysql_eng, coffee, weather, macro)
+        macro = pd.concat([cpi, fedfunds], ignore_index=True)
 
-    print("Transforming...")
-    dim_date, fact = transform_for_warehouse(coffee, weather, macro)
+        print("Clearing staging and warehouse tables...")
+        clear_staging(mysql_eng)
+        clear_warehouse(pg_eng)
 
-    print("Loading warehouse...")
-    load_warehouse(pg_eng, dim_date, fact)
+        print("Loading staging tables...")
+        coffee.to_sql("raw_coffee_prices", mysql_eng, if_exists="append", index=False)
+        weather.to_sql("raw_weather_data", mysql_eng, if_exists="append", index=False)
+        macro.to_sql("raw_macro_data", mysql_eng, if_exists="append", index=False)
 
-    print("Pipeline completed successfully with real data.")
+        print("Building dimensions...")
+        all_dates = pd.concat([
+            pd.to_datetime(coffee["trade_date"]),
+            pd.to_datetime(weather["weather_date"]),
+            pd.to_datetime(macro["macro_date"])
+        ], ignore_index=True)
+
+        dim_date = build_dim_date(all_dates)
+        dim_region = build_dim_region(
+            region_name="Sao Paulo, Brazil",
+            country="Brazil",
+            latitude=-23.55,
+            longitude=-46.63
+        )
+        dim_indicator = build_dim_indicator()
+
+        print("Loading dimensions...")
+        dim_date.to_sql("dim_date", pg_eng, if_exists="append", index=False)
+        dim_region.to_sql("dim_region", pg_eng, if_exists="append", index=False)
+        dim_indicator.to_sql("dim_indicator", pg_eng, if_exists="append", index=False)
+
+        region_lookup = pd.read_sql("SELECT region_id, region_name FROM dim_region", pg_eng)
+        indicator_lookup_df = pd.read_sql("SELECT indicator_id, indicator_name FROM dim_indicator", pg_eng)
+
+        region_id = int(region_lookup.loc[region_lookup["region_name"] == "Sao Paulo, Brazil", "region_id"].iloc[0])
+        indicator_lookup = dict(zip(indicator_lookup_df["indicator_name"], indicator_lookup_df["indicator_id"]))
+
+        print("Building fact tables...")
+        fact_coffee = build_fact_coffee_prices(coffee)
+        fact_weather = build_fact_weather_daily(weather, region_id)
+        fact_macro = build_fact_macro_daily(macro, indicator_lookup)
+        fact_features = build_fact_market_features(coffee, weather, cpi, fedfunds, region_id)
+
+        print("Loading fact tables...")
+        fact_coffee.to_sql("fact_coffee_prices", pg_eng, if_exists="append", index=False)
+        fact_weather.to_sql("fact_weather_daily", pg_eng, if_exists="append", index=False)
+        fact_macro.to_sql("fact_macro_daily", pg_eng, if_exists="append", index=False)
+        fact_features.to_sql("fact_market_features", pg_eng, if_exists="append", index=False)
+
+        rows_loaded = len(fact_features)
+        log_etl_finish(mysql_eng, run_id, "SUCCESS", rows_loaded, "Pipeline completed successfully")
+        print("Pipeline completed successfully.")
+
+    except Exception as e:
+        log_etl_finish(mysql_eng, run_id, "FAILED", 0, str(e))
+        raise
 
 
 if __name__ == "__main__":
