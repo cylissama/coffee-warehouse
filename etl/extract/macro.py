@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 import pandas as pd
 from dotenv import load_dotenv
@@ -6,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def fetch_fred_series(series_id: str, start="2024-01-01", end="2025-12-31") -> pd.DataFrame:
+def fetch_fred_series(series_id: str, start="2024-01-01", end=None, max_retries: int = 3) -> pd.DataFrame:
     """
     Fetch a FRED time series by series ID.
     Example:
@@ -23,11 +24,25 @@ def fetch_fred_series(series_id: str, start="2024-01-01", end="2025-12-31") -> p
         "api_key": api_key,
         "file_type": "json",
         "observation_start": start,
-        "observation_end": end,
     }
+    if end:
+        params["observation_end"] = end
 
-    response = requests.get(url, params=params, timeout=60)
-    response.raise_for_status()
+    response = None
+    for attempt in range(1, max_retries + 1):
+        response = requests.get(url, params=params, timeout=60)
+
+        if response.ok:
+            break
+
+        if response.status_code < 500 or attempt == max_retries:
+            response.raise_for_status()
+
+        time.sleep(min(2 ** (attempt - 1), 8))
+
+    if response is None:
+        raise RuntimeError(f"FRED request did not execute for {series_id}.")
+
     payload = response.json()
 
     observations = payload.get("observations", [])

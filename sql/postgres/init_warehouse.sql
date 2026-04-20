@@ -76,6 +76,9 @@ CREATE TABLE fact_market_features (
 
     cpi_value DECIMAL(14,6),
     fedfunds_value DECIMAL(14,6),
+    fertilizer_price_index DECIMAL(14,6),
+    buy_opportunity_score DECIMAL(6,2),
+    buy_signal VARCHAR(40),
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 

@@ -27,9 +27,18 @@ st.markdown("""
 
 ### 3. Macroeconomic Data
 - **Source:** FRED (Federal Reserve Economic Data)
-- **Series used:** `CPIAUCSL`
-- **What it provides:** Consumer Price Index values over time
-- **Metric used on the dashboard:** CPI as an **inflation index**, not a dollar amount
+- **Series used:** `CPIAUCSL`, `FEDFUNDS`, `PCU3253132531`
+- **What it provides:** inflation, interest-rate, and fertilizer producer price signals over time
+- **Metrics used on the dashboard:**
+  - CPI as an **inflation index**, not a dollar amount
+  - Fed Funds Rate as a **percent interest rate**
+  - Fertilizer Price Index as an **input-cost index proxy** for agriculture
+
+### 4. Prediction Layer
+- **Method used:** logistic regression trained during the ETL process
+- **Prediction target:** whether coffee futures will be higher **7 days later**
+- **Core inputs used:** recent coffee momentum, volatility, weather, fertilizer price changes, CPI, and Fed Funds
+- **Output shown on the dashboard:** a **Buy Opportunity Score** from 0 to 100
 """)
 
 st.markdown("---")
@@ -70,6 +79,30 @@ Rainfall matters because agricultural output can be affected by unusually dry or
 - It is an **index number** used to track inflation over time
 
 Higher CPI values mean the overall consumer price level is higher relative to the index base period.
+
+### Fed Funds Rate
+This is the **effective federal funds rate** from FRED.
+
+It provides a simple view of the broader interest-rate environment that can influence financing conditions, inventory costs, and commodity markets.
+
+### Fertilizer Price Index
+This is a **producer price index for fertilizer manufacturing** from FRED.
+
+- It is an **index number**, not a spot cash price
+- It is included as a proxy for **agricultural input costs**
+- Higher values can indicate more expensive fertilizer conditions for the broader agricultural sector
+
+### Buy Opportunity Score
+This is an **experimental prediction score** created inside the ETL pipeline.
+
+- It estimates the probability that coffee prices will be **higher 7 days from now**
+- Higher scores suggest buying now may be more attractive for a short-term buyer
+- It is a **decision-support indicator**, not financial advice
+
+The dashboard also translates the score into a simple signal:
+- **Buy Now** for stronger upside probability
+- **Watch** for a mixed outlook
+- **Wait** for weaker upside probability
 """)
 
 st.markdown("---")
@@ -85,7 +118,7 @@ The dashboard follows a simple ETL pipeline:
    - FRED
 
 2. **Transform**  
-   The data is cleaned, aligned by date, and prepared for analysis.
+   The data is cleaned, aligned by date, prepared for analysis, and used to generate the experimental buy-opportunity score.
 
 3. **Load**  
    - raw data goes into the staging database

@@ -108,19 +108,21 @@ def main():
     mysql_eng = mysql_engine()
     pg_eng = postgres_engine()
     mongo_db = get_mongo_database()
+    end_date = datetime.now().strftime("%Y-%m-%d")
 
     run_id = log_etl_start(mysql_eng, "coffee_market_pipeline")
 
     try:
         print("Extracting source data...")
-        coffee = fetch_coffee_prices(start="2024-01-01", end="2025-12-31")
-        weather = fetch_weather_data(start="2024-01-01", end="2025-12-31")
-        cpi = fetch_fred_series("CPIAUCSL", start="2024-01-01", end="2025-12-31")
-        fedfunds = fetch_fred_series("FEDFUNDS", start="2024-01-01", end="2025-12-31")
+        coffee = fetch_coffee_prices(start="2024-01-01", end=end_date)
+        weather = fetch_weather_data(start="2024-01-01", end=end_date)
+        cpi = fetch_fred_series("CPIAUCSL", start="2024-01-01", end=end_date)
+        fedfunds = fetch_fred_series("FEDFUNDS", start="2024-01-01", end=end_date)
+        fertilizer = fetch_fred_series("PCU3253132531", start="2024-01-01", end=end_date)
         print("Extracting coffee news articles...")
         news_articles = fetch_coffee_news_rss(max_articles=20)
 
-        macro = pd.concat([cpi, fedfunds], ignore_index=True)
+        macro = pd.concat([cpi, fedfunds, fertilizer], ignore_index=True)
 
         print("Clearing staging and warehouse tables...")
         clear_staging(mysql_eng)
@@ -172,7 +174,7 @@ def main():
         fact_coffee = build_fact_coffee_prices(coffee)
         fact_weather = build_fact_weather_daily(weather, region_id)
         fact_macro = build_fact_macro_daily(macro, indicator_lookup)
-        fact_features = build_fact_market_features(coffee, weather, cpi, fedfunds, region_id)
+        fact_features = build_fact_market_features(coffee, weather, cpi, fedfunds, fertilizer, region_id)
 
         print("Loading fact tables...")
         fact_coffee.to_sql("fact_coffee_prices", pg_eng, if_exists="append", index=False)

@@ -128,4 +128,4 @@ for i, row in filtered_df.iterrows():
         st.markdown("---")
 
 st.subheader("Raw News Data")
-st.dataframe(filtered_df, use_container_width=True)
+st.dataframe(filtered_df, width="stretch")
