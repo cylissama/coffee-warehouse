@@ -30,6 +30,31 @@ from etl.load.load_mongo import (
 
 load_dotenv()
 
+BRAZIL_COFFEE_REGIONS = [
+    {
+        "region_name": "Sao Paulo, Brazil",
+        "country": "Brazil",
+        "latitude": -23.55,
+        "longitude": -46.63,
+    },
+    {
+        "region_name": "Belo Horizonte, Brazil",
+        "country": "Brazil",
+        "latitude": -19.92,
+        "longitude": -43.94,
+    },
+    {
+        "region_name": "Vitoria, Brazil",
+        "country": "Brazil",
+        "latitude": -20.32,
+        "longitude": -40.34,
+    },
+]
+
+
+def pipeline_start_date() -> str:
+    return os.getenv("PIPELINE_START_DATE", "2016-01-01")
+
 
 def mysql_engine():
     return create_engine(
@@ -108,21 +133,35 @@ def main():
     mysql_eng = mysql_engine()
     pg_eng = postgres_engine()
     mongo_db = get_mongo_database()
+    start_date = pipeline_start_date()
     end_date = datetime.now().strftime("%Y-%m-%d")
 
     run_id = log_etl_start(mysql_eng, "coffee_market_pipeline")
 
     try:
         print("Extracting source data...")
-        coffee = fetch_coffee_prices(start="2024-01-01", end=end_date)
-        weather = fetch_weather_data(start="2024-01-01", end=end_date)
-        cpi = fetch_fred_series("CPIAUCSL", start="2024-01-01", end=end_date)
-        fedfunds = fetch_fred_series("FEDFUNDS", start="2024-01-01", end=end_date)
-        fertilizer = fetch_fred_series("PCU3253132531", start="2024-01-01", end=end_date)
+        print(f"Using pipeline date range: {start_date} to {end_date}")
+        coffee = fetch_coffee_prices(start=start_date, end=end_date)
+        weather_frames = []
+        for region in BRAZIL_COFFEE_REGIONS:
+            weather_region = fetch_weather_data(
+                latitude=region["latitude"],
+                longitude=region["longitude"],
+                start=start_date,
+                end=end_date,
+            )
+            weather_region["location_name"] = region["region_name"]
+            weather_frames.append(weather_region)
+        weather = pd.concat(weather_frames, ignore_index=True)
+        cpi = fetch_fred_series("CPIAUCSL", start=start_date, end=end_date)
+        fedfunds = fetch_fred_series("FEDFUNDS", start=start_date, end=end_date)
+        fertilizer = fetch_fred_series("PCU3253132531", start=start_date, end=end_date)
+        brl_usd = fetch_fred_series("DEXBZUS", start=start_date, end=end_date)
+        milk = fetch_fred_series("WPU023503", start=start_date, end=end_date)
         print("Extracting coffee news articles...")
         news_articles = fetch_coffee_news_rss(max_articles=20)
 
-        macro = pd.concat([cpi, fedfunds, fertilizer], ignore_index=True)
+        macro = pd.concat([cpi, fedfunds, fertilizer, brl_usd, milk], ignore_index=True)
 
         print("Clearing staging and warehouse tables...")
         clear_staging(mysql_eng)
@@ -151,11 +190,17 @@ def main():
         ], ignore_index=True)
 
         dim_date = build_dim_date(all_dates)
-        dim_region = build_dim_region(
-            region_name="Sao Paulo, Brazil",
-            country="Brazil",
-            latitude=-23.55,
-            longitude=-46.63
+        dim_region = pd.concat(
+            [
+                build_dim_region(
+                    region_name=region["region_name"],
+                    country=region["country"],
+                    latitude=region["latitude"],
+                    longitude=region["longitude"],
+                )
+                for region in BRAZIL_COFFEE_REGIONS
+            ],
+            ignore_index=True,
         )
         dim_indicator = build_dim_indicator()
 
@@ -167,14 +212,34 @@ def main():
         region_lookup = pd.read_sql("SELECT region_id, region_name FROM dim_region", pg_eng)
         indicator_lookup_df = pd.read_sql("SELECT indicator_id, indicator_name FROM dim_indicator", pg_eng)
 
-        region_id = int(region_lookup.loc[region_lookup["region_name"] == "Sao Paulo, Brazil", "region_id"].iloc[0])
         indicator_lookup = dict(zip(indicator_lookup_df["indicator_name"], indicator_lookup_df["indicator_id"]))
 
         print("Building fact tables...")
         fact_coffee = build_fact_coffee_prices(coffee)
-        fact_weather = build_fact_weather_daily(weather, region_id)
         fact_macro = build_fact_macro_daily(macro, indicator_lookup)
-        fact_features = build_fact_market_features(coffee, weather, cpi, fedfunds, fertilizer, region_id)
+        fact_weather_frames = []
+        fact_feature_frames = []
+        for region in BRAZIL_COFFEE_REGIONS:
+            region_id = int(
+                region_lookup.loc[region_lookup["region_name"] == region["region_name"], "region_id"].iloc[0]
+            )
+            region_weather = weather.loc[weather["location_name"] == region["region_name"]].copy()
+            fact_weather_frames.append(build_fact_weather_daily(region_weather, region_id))
+            fact_feature_frames.append(
+                build_fact_market_features(
+                    coffee,
+                    region_weather,
+                    cpi,
+                    fedfunds,
+                    fertilizer,
+                    brl_usd,
+                    milk,
+                    region_id,
+                )
+            )
+
+        fact_weather = pd.concat(fact_weather_frames, ignore_index=True)
+        fact_features = pd.concat(fact_feature_frames, ignore_index=True)
 
         print("Loading fact tables...")
         fact_coffee.to_sql("fact_coffee_prices", pg_eng, if_exists="append", index=False)

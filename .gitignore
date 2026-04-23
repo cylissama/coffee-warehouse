@@ -8,6 +8,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.python-version
 
 # Virtual environments
 .venv/
@@ -21,6 +22,7 @@ conda-meta/
 
 # Jupyter
 .ipynb_checkpoints/
+*.nbconvert.ipynb
 
 # Environment / secrets
 .env
@@ -40,6 +42,9 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
+.tox/
+.nox/
 
 # Build / packaging
 build/
@@ -47,6 +52,7 @@ dist/
 .eggs/
 *.egg-info/
 pip-wheel-metadata/
+*.zip
 
 # IDEs / editors
 .vscode/
@@ -56,6 +62,7 @@ pip-wheel-metadata/
 
 # Streamlit
 .streamlit/secrets.toml
+.streamlit/config.toml
 
 # Project data outputs
 data/raw/*

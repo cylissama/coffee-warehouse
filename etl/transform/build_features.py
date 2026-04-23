@@ -11,6 +11,8 @@ BUY_SCORE_FEATURES = [
     "precip_7day_avg",
     "precip_30day_avg",
     "fertilizer_30day_change",
+    "milk_30day_change",
+    "brl_usd_30day_change",
     "cpi_30day_change",
     "fedfunds_30day_change",
 ]
@@ -78,6 +80,8 @@ def add_buy_opportunity_predictions(df: pd.DataFrame) -> pd.DataFrame:
     working_df["precip_7day_avg"] = working_df["precipitation"].rolling(7, min_periods=7).mean()
     working_df["precip_30day_avg"] = working_df["precipitation"].rolling(30, min_periods=30).mean()
     working_df["fertilizer_30day_change"] = working_df["fertilizer_price_index"].pct_change(30)
+    working_df["milk_30day_change"] = working_df["milk_price_index"].pct_change(30)
+    working_df["brl_usd_30day_change"] = working_df["brl_usd_exchange_rate"].pct_change(30)
     working_df["cpi_30day_change"] = working_df["cpi_value"].pct_change(30)
     working_df["fedfunds_30day_change"] = working_df["fedfunds_value"].diff(30)
     working_df["future_7d_return"] = (
@@ -158,6 +162,18 @@ def build_dim_indicator() -> pd.DataFrame:
             "description": "Producer Price Index by Industry: Fertilizer Manufacturing",
             "unit": "index",
             "source": "fred"
+        },
+        {
+            "indicator_name": "DEXBZUS",
+            "description": "Brazilian Reals to U.S. Dollar Spot Exchange Rate",
+            "unit": "BRL per USD",
+            "source": "fred"
+        },
+        {
+            "indicator_name": "WPU023503",
+            "description": "Producer Price Index by Commodity: Processed Foods and Feeds: Liquid Milk Products",
+            "unit": "index",
+            "source": "fred"
         }
     ])
 
@@ -209,6 +225,8 @@ def build_fact_market_features(
     cpi: pd.DataFrame,
     fedfunds: pd.DataFrame,
     fertilizer: pd.DataFrame,
+    brl_usd: pd.DataFrame,
+    milk: pd.DataFrame,
     region_id: int
 ) -> pd.DataFrame:
     coffee = coffee.copy()
@@ -216,30 +234,49 @@ def build_fact_market_features(
     cpi = cpi.copy()
     fedfunds = fedfunds.copy()
     fertilizer = fertilizer.copy()
+    brl_usd = brl_usd.copy()
+    milk = milk.copy()
 
     coffee["trade_date"] = pd.to_datetime(coffee["trade_date"])
     weather["weather_date"] = pd.to_datetime(weather["weather_date"])
     cpi["macro_date"] = pd.to_datetime(cpi["macro_date"])
     fedfunds["macro_date"] = pd.to_datetime(fedfunds["macro_date"])
     fertilizer["macro_date"] = pd.to_datetime(fertilizer["macro_date"])
+    brl_usd["macro_date"] = pd.to_datetime(brl_usd["macro_date"])
+    milk["macro_date"] = pd.to_datetime(milk["macro_date"])
+
+    def prepare_macro_series(source_df: pd.DataFrame, value_column: str) -> pd.DataFrame:
+        return source_df[["macro_date", "indicator_value"]].rename(
+            columns={
+                "macro_date": "trade_date",
+                "indicator_value": value_column,
+            }
+        )
 
     df = coffee.merge(weather, left_on="trade_date", right_on="weather_date", how="left")
     df = df.merge(
-        cpi[["macro_date", "indicator_value"]].rename(columns={"indicator_value": "cpi_value"}),
-        left_on="trade_date",
-        right_on="macro_date",
+        prepare_macro_series(cpi, "cpi_value"),
+        on="trade_date",
         how="left"
     )
     df = df.merge(
-        fedfunds[["macro_date", "indicator_value"]].rename(columns={"indicator_value": "fedfunds_value"}),
-        left_on="trade_date",
-        right_on="macro_date",
+        prepare_macro_series(fedfunds, "fedfunds_value"),
+        on="trade_date",
         how="left"
     )
     df = df.merge(
-        fertilizer[["macro_date", "indicator_value"]].rename(columns={"indicator_value": "fertilizer_price_index"}),
-        left_on="trade_date",
-        right_on="macro_date",
+        prepare_macro_series(fertilizer, "fertilizer_price_index"),
+        on="trade_date",
+        how="left"
+    )
+    df = df.merge(
+        prepare_macro_series(brl_usd, "brl_usd_exchange_rate"),
+        on="trade_date",
+        how="left"
+    )
+    df = df.merge(
+        prepare_macro_series(milk, "milk_price_index"),
+        on="trade_date",
         how="left"
     )
 
@@ -247,6 +284,8 @@ def build_fact_market_features(
     df["cpi_value"] = df["cpi_value"].ffill()
     df["fedfunds_value"] = df["fedfunds_value"].ffill()
     df["fertilizer_price_index"] = df["fertilizer_price_index"].ffill()
+    df["brl_usd_exchange_rate"] = df["brl_usd_exchange_rate"].ffill()
+    df["milk_price_index"] = df["milk_price_index"].ffill()
 
     df["coffee_daily_return"] = df["close_price"].pct_change()
     df["coffee_7day_ma"] = df["close_price"].rolling(7, min_periods=1).mean()
@@ -267,6 +306,8 @@ def build_fact_market_features(
         "cpi_value": df["cpi_value"],
         "fedfunds_value": df["fedfunds_value"],
         "fertilizer_price_index": df["fertilizer_price_index"],
+        "brl_usd_exchange_rate": df["brl_usd_exchange_rate"],
+        "milk_price_index": df["milk_price_index"],
         "buy_opportunity_score": df["buy_opportunity_score"],
         "buy_signal": df["buy_signal"],
     }).drop_duplicates(subset=["date_id", "region_id"])
